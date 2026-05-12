@@ -67,6 +67,7 @@ import { handler as f5GuardrailsScan } from './f5-guardrails/scan';
 import { handler as azureShieldPrompt } from './azure/shieldPrompt';
 import { handler as azureProtectedMaterial } from './azure/protectedMaterial';
 import { handler as catoAnalyze } from './cato/analyze';
+import { streamHandler as catoAnalyzeStream } from './cato/analyzeStream';
 
 export const plugins = {
   default: {
@@ -179,5 +180,6 @@ export const plugins = {
   },
   cato: {
     analyze: catoAnalyze,
+    analyzeStream: catoAnalyzeStream,
   },
 };

@@ -22,6 +22,37 @@
   },
   "functions": [
     {
+      "name": "Cato Networks Streaming Guardrail",
+      "id": "analyzeStream",
+      "supportedHooks": ["streamingAfterRequestHook"],
+      "type": "guardrail",
+      "description": [
+        {
+          "type": "subHeading",
+          "text": "Stream-time inspection via Cato's WebSocket analyze endpoint. Each upstream SSE chunk is forwarded to Cato; verified chunks pass through, and blocked streams are terminated with a policy-violation message."
+        }
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "userEmail": { "type": "string", "label": "User Email" },
+          "keyAlias": { "type": "string", "label": "Gateway Key Alias" },
+          "failOpen": {
+            "type": "boolean",
+            "label": "Fail Open",
+            "description": [
+              {
+                "type": "subHeading",
+                "text": "When true (default), WebSocket connection failures allow the stream through unchanged. When false, the stream is blocked on failure."
+              }
+            ],
+            "default": true
+          }
+        },
+        "required": []
+      }
+    },
+    {
       "name": "Cato Networks Guardrail",
       "id": "analyze",
       "supportedHooks": ["beforeRequestHook", "afterRequestHook"],

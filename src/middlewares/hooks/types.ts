@@ -23,7 +23,11 @@ export interface HookObject {
   onFail?: HookOnFailObject;
   onSuccess?: HookOnSuccessObject;
   deny?: boolean;
-  eventType: 'beforeRequestHook' | 'afterRequestHook';
+  streaming?: boolean;
+  eventType:
+    | 'beforeRequestHook'
+    | 'afterRequestHook'
+    | 'streamingAfterRequestHook';
 }
 
 export interface HookSpanContextRequest {
@@ -107,7 +111,10 @@ export type AllHookResults = {
   afterRequestHooksResult: HookResult[];
 };
 
-export type EventType = 'beforeRequestHook' | 'afterRequestHook';
+export type EventType =
+  | 'beforeRequestHook'
+  | 'afterRequestHook'
+  | 'streamingAfterRequestHook';
 
 export enum HookType {
   GUARDRAIL = 'guardrail',

@@ -3,4 +3,5 @@ export const HOOKS_EVENT_TYPE_PRESETS = {
   ASYNC_BEFORE_REQUEST_HOOK: 'asyncBeforeRequestHook',
   SYNC_AFTER_REQUEST_HOOK: 'syncAfterRequestHook',
   ASYNC_AFTER_REQUEST_HOOK: 'asyncAfterRequestHook',
+  STREAMING_AFTER_REQUEST_HOOK: 'streamingAfterRequestHook',
 };

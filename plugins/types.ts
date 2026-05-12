@@ -19,7 +19,10 @@ export interface PluginHandlerResponse {
   transformed?: boolean;
 }
 
-export type HookEventType = 'beforeRequestHook' | 'afterRequestHook';
+export type HookEventType =
+  | 'beforeRequestHook'
+  | 'afterRequestHook'
+  | 'streamingAfterRequestHook';
 
 export type PluginHandler<P = Record<string, string>> = (
   context: PluginContext,
@@ -31,3 +34,31 @@ export type PluginHandler<P = Record<string, string>> = (
     putInCacheWithValue?: (key: string, value: any) => Promise<any>;
   }
 ) => Promise<PluginHandlerResponse>;
+
+export interface StreamChunk {
+  raw: string;
+  data?: any;
+  kind: 'data' | 'done' | 'event' | 'raw';
+}
+
+export class PluginStreamBlocked extends Error {
+  blockedChunk?: StreamChunk;
+  constructor(
+    public reason: string,
+    blockedChunk?: StreamChunk
+  ) {
+    super(reason);
+    this.name = 'PluginStreamBlocked';
+    this.blockedChunk = blockedChunk;
+  }
+}
+
+export type StreamingPluginHandler<P = Record<string, string>> = (
+  context: PluginContext,
+  parameters: PluginParameters<P>,
+  upstream: AsyncIterable<StreamChunk>,
+  options?: {
+    env: Record<string, any>;
+    signal?: AbortSignal;
+  }
+) => AsyncIterable<StreamChunk>;

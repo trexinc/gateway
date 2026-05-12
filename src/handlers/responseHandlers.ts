@@ -123,7 +123,10 @@ export async function responseHandler(
         strictOpenAiCompliance,
         gatewayRequest,
         responseTransformer as endpointStrings,
-        hooksResult
+        hooksResult,
+        hooksManager,
+        hookSpanId,
+        env(c)
       ),
       responseJson: null,
     };

@@ -35,6 +35,51 @@ const shouldSendHookResultChunk = (
   );
 };
 
+const toStreamChunks = async function* (
+  source: AsyncIterable<string | Uint8Array>
+): AsyncIterable<{ raw: string; data?: any; kind: 'data' | 'done' | 'raw' }> {
+  for await (const raw of source) {
+    const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
+    let data: any | undefined;
+    let kind: 'data' | 'done' | 'raw' = 'raw';
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trimStart();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trimStart();
+      if (!payload) continue;
+      if (payload === '[DONE]') {
+        kind = 'done';
+        break;
+      }
+      try {
+        data = JSON.parse(payload);
+        kind = 'data';
+      } catch {}
+      break;
+    }
+    yield { raw: text.endsWith('\n\n') ? text : `${text}\n\n`, data, kind };
+  }
+};
+
+const applyStreamingHooks = (
+  source: AsyncIterable<string | Uint8Array>,
+  hooksManager: any,
+  hookSpanId: string | undefined,
+  env: Record<string, any> | undefined
+): AsyncIterable<{ raw: string }> => {
+  const chunks = toStreamChunks(source);
+  if (!hooksManager || !hookSpanId)
+    return chunks as AsyncIterable<{ raw: string }>;
+  try {
+    return hooksManager.composeStreamingPipeline(hookSpanId, chunks, {
+      env: env || {},
+    });
+  } catch (err) {
+    console.error('Error composing streaming pipeline:', err);
+    return chunks as AsyncIterable<{ raw: string }>;
+  }
+};
+
 function getPayloadFromAWSChunk(chunk: Uint8Array): string {
   const decoder = new TextDecoder();
   const chunkLength = readUInt32BE(chunk, 0);
@@ -305,7 +350,10 @@ export function handleStreamingMode(
   strictOpenAiCompliance: boolean,
   gatewayRequest: Params,
   fn: endpointStrings,
-  hooksResult: HookSpan['hooksResult']
+  hooksResult: HookSpan['hooksResult'],
+  hooksManager?: any,
+  hookSpanId?: string,
+  env?: Record<string, any>
 ): Response {
   const splitPattern = getStreamModeSplitPattern(proxyProvider, requestURL);
   // If the provider doesn't supply completion id,
@@ -330,14 +378,21 @@ export function handleStreamingMode(
             await writer.write(encoder.encode(hookResultChunk));
           }
         }
-        for await (const chunk of readAWSStream(
+        const upstream = readAWSStream(
           reader,
           responseTransformer,
           fallbackChunkId,
           strictOpenAiCompliance,
           gatewayRequest
-        )) {
-          await writer.write(encoder.encode(chunk));
+        );
+        const pipeline = applyStreamingHooks(
+          upstream,
+          hooksManager,
+          hookSpanId,
+          env
+        );
+        for await (const chunk of pipeline) {
+          await writer.write(encoder.encode(chunk.raw));
         }
       } catch (error) {
         console.error('Error during stream processing:', proxyProvider, error);
@@ -362,7 +417,7 @@ export function handleStreamingMode(
             await writer.write(encoder.encode(hookResultChunk));
           }
         }
-        for await (const chunk of readStream(
+        const upstream = readStream(
           reader,
           splitPattern,
           responseTransformer,
@@ -370,8 +425,15 @@ export function handleStreamingMode(
           fallbackChunkId,
           strictOpenAiCompliance,
           gatewayRequest
-        )) {
-          await writer.write(encoder.encode(chunk));
+        );
+        const pipeline = applyStreamingHooks(
+          upstream,
+          hooksManager,
+          hookSpanId,
+          env
+        );
+        for await (const chunk of pipeline) {
+          await writer.write(encoder.encode(chunk.raw));
         }
       } catch (error) {
         console.error('Error during stream processing:', proxyProvider, error);

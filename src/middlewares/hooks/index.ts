@@ -19,6 +19,7 @@ export class HookSpan {
   private context: HookSpanContext;
   private beforeRequestHooks: HookObject[];
   private afterRequestHooks: HookObject[];
+  private streamingAfterRequestHooks: HookObject[];
   private hooksResult: {
     beforeRequestHooksResult: HookResult[];
     afterRequestHooksResult: HookResult[];
@@ -49,9 +50,17 @@ export class HookSpan {
       beforeRequestHooks,
       'beforeRequestHook'
     );
+    const afterHooksNonStreaming = afterRequestHooks.filter(
+      (h) => !h.streaming
+    );
+    const afterHooksStreaming = afterRequestHooks.filter((h) => h.streaming);
     this.afterRequestHooks = this.initializeHooks(
-      afterRequestHooks,
+      afterHooksNonStreaming,
       'afterRequestHook'
+    );
+    this.streamingAfterRequestHooks = this.initializeHooks(
+      afterHooksStreaming,
+      'streamingAfterRequestHook'
     );
     this.parentHookSpanId = parentHookSpanId;
     this.hooksResult = {
@@ -187,6 +196,10 @@ export class HookSpan {
     return this.afterRequestHooks;
   }
 
+  public getStreamingAfterRequestHooks(): HookObject[] {
+    return this.streamingAfterRequestHooks;
+  }
+
   public getParentHookSpanId(): string | null {
     return this.parentHookSpanId;
   }
@@ -277,6 +290,37 @@ export class HooksManager {
   public getSpan(spanId: string): HookSpan {
     const span = this.spans[spanId] || {};
     return span;
+  }
+
+  public composeStreamingPipeline(
+    spanId: string,
+    upstream: AsyncIterable<any>,
+    options: HandlerOptions
+  ): AsyncIterable<any> {
+    const span = this.getSpan(spanId);
+    if (!span || typeof span.getStreamingAfterRequestHooks !== 'function') {
+      return upstream;
+    }
+    const hooks = span.getStreamingAfterRequestHooks();
+    if (!hooks.length) return upstream;
+
+    let pipeline = upstream;
+    for (const hook of hooks) {
+      if (this.shouldSkipHook(span, hook) || !hook.checks?.length) continue;
+      for (const check of hook.checks) {
+        if (check.is_enabled === false) continue;
+        const [source, fn] = check.id.split('.');
+        const plugin = this.plugins[source]?.[fn];
+        if (typeof plugin !== 'function') continue;
+        const ctx = span.getContext();
+        try {
+          pipeline = plugin(ctx, check.parameters, pipeline, options);
+        } catch (err) {
+          console.error(`Streaming plugin "${check.id}" failed:`, err);
+        }
+      }
+    }
+    return pipeline;
   }
 
   private async executeFunction(
@@ -457,6 +501,8 @@ export class HooksManager {
       (context.requestType === 'embed' && hook.type === HookType.MUTATOR) ||
       (hook.eventType === 'afterRequestHook' &&
         context.response.statusCode !== 200) ||
+      (hook.eventType === 'streamingAfterRequestHook' &&
+        !context.request.isStreamingRequest) ||
       (hook.eventType === 'beforeRequestHook' &&
         span.getParentHookSpanId() !== null) ||
       (hook.type === HookType.MUTATOR && !!hook.async)
@@ -542,6 +588,13 @@ export class HooksManager {
       hooksToExecute.push(
         ...span.getAfterRequestHooks().filter((h) => !h.async)
       );
+    }
+    if (
+      eventTypePresets.includes(
+        HOOKS_EVENT_TYPE_PRESETS.STREAMING_AFTER_REQUEST_HOOK
+      )
+    ) {
+      hooksToExecute.push(...span.getStreamingAfterRequestHooks());
     }
 
     return hooksToExecute;
