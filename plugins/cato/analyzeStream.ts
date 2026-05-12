@@ -23,7 +23,13 @@ interface CatoStreamFrame {
   done?: boolean;
   blocking_message?: string;
   first_blocked_chunk?: any;
+  action_type?: string;
+  required_action?: { action_type?: string; detection_message?: string };
 }
+
+const isAnonymizeAction = (frame: CatoStreamFrame): boolean =>
+  frame.action_type === 'anonymize_action' ||
+  frame.required_action?.action_type === 'anonymize_action';
 
 interface OpenWsLike {
   send(data: string): void;
@@ -39,7 +45,53 @@ export type WsFactory = (
   headers: Record<string, string>
 ) => Promise<OpenWsLike>;
 
-const defaultWsFactory: WsFactory = async (url, headers) => {
+const isWorkersRuntime = (): boolean =>
+  typeof (globalThis as any).WebSocketPair !== 'undefined';
+
+const workersWsFactory: WsFactory = async (url, headers) => {
+  const httpUrl = url
+    .replace(/^ws:\/\//, 'http://')
+    .replace(/^wss:\/\//, 'https://');
+  const response = await fetch(httpUrl, {
+    method: 'GET',
+    headers: {
+      ...headers,
+      Upgrade: 'websocket',
+      Connection: 'Keep-Alive',
+      'Keep-Alive': 'timeout=600',
+    },
+  });
+  const ws = (response as any).webSocket;
+  if (!ws) {
+    throw new Error(`Cato WebSocket upgrade failed: status=${response.status}`);
+  }
+  ws.accept();
+  const adapter: OpenWsLike = {
+    send: (data) => ws.send(data),
+    close: (code?: number, reason?: string) => ws.close(code, reason),
+    onmessage: null,
+    onerror: null,
+    onclose: null,
+    onopen: null,
+  };
+  ws.addEventListener('message', (event: any) => {
+    adapter.onmessage?.({
+      data:
+        typeof event.data === 'string'
+          ? event.data
+          : new TextDecoder().decode(event.data),
+    });
+  });
+  ws.addEventListener('error', (event: any) => {
+    adapter.onerror?.(event);
+  });
+  ws.addEventListener('close', (event: any) => {
+    adapter.onclose?.(event);
+  });
+  return adapter;
+};
+
+const nodeWsFactory: WsFactory = async (url, headers) => {
   const { WebSocket } = await import('ws');
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url, { headers });
@@ -68,6 +120,11 @@ const defaultWsFactory: WsFactory = async (url, headers) => {
       adapter.onclose?.({ code, reason: reason?.toString() });
     });
   });
+};
+
+const defaultWsFactory: WsFactory = async (url, headers) => {
+  if (isWorkersRuntime()) return workersWsFactory(url, headers);
+  return nodeWsFactory(url, headers);
 };
 
 const wsUrl = (apiBase: string) =>
@@ -211,10 +268,14 @@ export const buildStreamHandler = (
       headers['x-cato-gateway-key-alias'] = String(parameters.keyAlias);
     }
 
+    const target = wsUrl(apiBase);
     let ws: OpenWsLike;
     try {
-      ws = await wsFactory(wsUrl(apiBase), headers);
-    } catch (err) {
+      ws = await wsFactory(target, headers);
+    } catch (err: any) {
+      console.error(
+        `Cato streaming guardrail: WS connect failed (${target}): ${err?.message || err}`
+      );
       if (!failOpen) {
         yield buildBlockingChunk(undefined, 'Cato stream connection failed');
         yield doneChunk();
@@ -265,6 +326,16 @@ export const buildStreamHandler = (
           break;
         }
         const frame = next.value as CatoStreamFrame;
+        if (isAnonymizeAction(frame)) {
+          senderAborted = true;
+          const reason =
+            frame.required_action?.detection_message ||
+            frame.blocking_message ||
+            'Policy violation detected. Anonymization is not supported in streaming mode.';
+          yield buildBlockingChunk(frame.first_blocked_chunk, reason);
+          yield doneChunk();
+          return;
+        }
         if (frame.verified_chunk) {
           yield wrapAsSseChunk(frame.verified_chunk);
         } else if (frame.blocking_message) {

@@ -133,6 +133,59 @@ describe('Cato streaming guardrail', () => {
     expect(out[1].kind).toBe('done');
   });
 
+  it('blocks the stream when Cato signals anonymize_action via required_action', async () => {
+    const ws = makeMockWs();
+    const factory = jest.fn(async () => ws as any);
+    const handler = buildStreamHandler(factory);
+
+    const upstream = upstreamOf([
+      chunk({ id: 'c1', choices: [{ delta: { content: 'leaking SSN' } }] }),
+      doneChunk(),
+    ]);
+
+    const iter = handler(makeContext(), baseParams, upstream);
+    const collector = collect(iter);
+
+    await new Promise((r) => setImmediate(r));
+    ws.pushFrame({
+      required_action: {
+        action_type: 'anonymize_action',
+        detection_message: 'PII detected mid-stream',
+      },
+    });
+
+    const out = await collector;
+    expect(out).toHaveLength(2);
+    expect(out[0].data.choices[0].delta.content).toContain(
+      'PII detected mid-stream'
+    );
+    expect(out[0].data.choices[0].finish_reason).toBe('content_filter');
+    expect(out[1].kind).toBe('done');
+  });
+
+  it('blocks the stream when Cato signals anonymize_action at the top level', async () => {
+    const ws = makeMockWs();
+    const factory = jest.fn(async () => ws as any);
+    const handler = buildStreamHandler(factory);
+
+    const upstream = upstreamOf([
+      chunk({ choices: [{ delta: { content: 'hi' } }] }),
+      doneChunk(),
+    ]);
+
+    const iter = handler(makeContext(), baseParams, upstream);
+    const collector = collect(iter);
+
+    await new Promise((r) => setImmediate(r));
+    ws.pushFrame({ action_type: 'anonymize_action' });
+
+    const out = await collector;
+    expect(out[0].data.choices[0].finish_reason).toBe('content_filter');
+    expect(out[0].data.choices[0].delta.content).toContain(
+      'Anonymization is not supported in streaming mode'
+    );
+  });
+
   it('fails open and forwards upstream when Cato connection throws (failOpen=true)', async () => {
     const factory = jest.fn(async () => {
       throw new Error('ECONNREFUSED');

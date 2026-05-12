@@ -311,7 +311,12 @@ export class HooksManager {
         if (check.is_enabled === false) continue;
         const [source, fn] = check.id.split('.');
         const plugin = this.plugins[source]?.[fn];
-        if (typeof plugin !== 'function') continue;
+        if (typeof plugin !== 'function') {
+          console.warn(
+            `Streaming plugin "${check.id}" not found (source=${source}, fn=${fn})`
+          );
+          continue;
+        }
         const ctx = span.getContext();
         try {
           pipeline = plugin(ctx, check.parameters, pipeline, options);
